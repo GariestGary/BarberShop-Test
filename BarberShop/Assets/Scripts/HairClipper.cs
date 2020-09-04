@@ -6,24 +6,32 @@ public class HairClipper : MonoBehaviour, ITick, IAwake
 {
 	[Range(0, 1)]
 	[SerializeField] private float sensitivity;
-	[SerializeField] private LayerMask headlayer;
+	[Space]
+	[SerializeField] private float depthOffset;
+	[SerializeField] private float depthCheckOffset;
+	[Range(1, 50)]
 	[SerializeField] private float rotationDamping;
+	[Range(1, 50)]
+	[SerializeField] private float depthMoveDamping;
+	[Space]
+	[SerializeField] private LayerMask headLayer;
 	[SerializeField] private BoxCollider bounds;
+	[SerializeField] private List<Vector3> pointsToCheck;
+
 	public bool Process => gameObject.activeSelf;
 
 	private InputManager input => Toolbox.GetManager<InputManager>();
 	private GameManager game => Toolbox.GetManager<GameManager>();
 
-	private Transform t;
-	private Camera cam;
-	private Rigidbody rb;
-	private bool moved = false;
+	private Transform t;			//self Transform
+	private Rigidbody rb;			//RigidBody
+	private bool moved = false;     //Is hair clipper moved flag
+	private bool overHead = false;  //Is hair clipper moving over head
 
 	public void OnAwake()
 	{
 		Toolbox.GetManager<UpdateManager>().Add(this);
 		t = transform;
-		cam = Camera.main;
 		rb = GetComponent<Rigidbody>();
 	}
 
@@ -31,8 +39,13 @@ public class HairClipper : MonoBehaviour, ITick, IAwake
 	{
 		if (game.Head == null) return;
 
-		Move();
-		Clamp();
+		if (input.Clicked)
+		{
+			Move();
+			Clamp();
+		}
+
+		DepthMove();
 
 		if (!moved) return;
 
@@ -42,31 +55,48 @@ public class HairClipper : MonoBehaviour, ITick, IAwake
 
 	private void Move()
 	{
-		if (input.Clicked)
-		{
-			Vector3 moveDelta = new Vector3(input.PointerDelta.x, input.PointerDelta.y, 0);
-			rb.MovePosition(t.position + moveDelta * sensitivity);
+		t.position += new Vector3(input.PointerDelta.x, input.PointerDelta.y, 0) * sensitivity;
 
-			if (!moved) moved = true;
+		if (!moved) moved = true;
+	}
+
+	private void DepthMove()
+	{
+		float maxDepth = 0;
+
+		overHead = false;
+
+		foreach (var point in pointsToCheck)
+		{
+			if(Physics.Raycast(t.position + point + (Vector3.back * depthCheckOffset), Vector3.forward, out RaycastHit hit, float.PositiveInfinity, headLayer))
+			{
+				overHead = true;
+
+				if (hit.point.z < maxDepth) maxDepth = hit.point.z;
+			}
 		}
-		t.position = new Vector3(t.position.x, t.position.y, game.Head.position.z);
-		rb.velocity = Vector3.zero;
+
+		float targetDepth;
+
+		if(overHead)
+		{
+			targetDepth = maxDepth + depthOffset;
+		}
+		else
+		{
+			targetDepth = game.Head.position.z;
+		}
+
+		t.position = new Vector3(t.position.x, t.position.y, Mathf.Lerp(t.position.z, targetDepth, Time.deltaTime * depthMoveDamping));
 	}
 
 	private void Rotate()
 	{
-		RaycastHit hit;
-
 		Vector3 headDirection = game.Head.position - t.position;
 
-		Debug.DrawRay(t.position, headDirection.normalized * Vector3.Distance(game.Head.position, t.position), Color.red);
+		Quaternion targetRotation = Quaternion.LookRotation(headDirection);
 
-		if(Physics.Raycast(t.position, headDirection, out hit, Vector3.Distance(game.Head.position, t.position), headlayer))
-		{
-			Debug.DrawRay(hit.point, hit.normal, Color.green);
-
-			t.rotation = Quaternion.Lerp(t.rotation, Quaternion.LookRotation(headDirection), Time.deltaTime * rotationDamping);
-		}
+		t.rotation = Quaternion.Lerp(t.rotation, targetRotation, Time.deltaTime * rotationDamping);
 	}
 
 	private void Clamp()
